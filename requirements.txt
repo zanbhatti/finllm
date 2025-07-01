@@ -3,3 +3,5 @@ numpy
 scikit-learn
 scipy
 streamlit
+matplotlib
+QuantLib-Python

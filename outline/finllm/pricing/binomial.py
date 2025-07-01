@@ -1,4 +1,4 @@
-from options import Option
+from finllm.pricing.base import Option
 from math import log, sqrt, exp
 from scipy.stats import norm
 
