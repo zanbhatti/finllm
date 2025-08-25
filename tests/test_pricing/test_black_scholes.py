@@ -1,78 +1,120 @@
 import unittest
+import math
 from finllm.pricing.black_scholes import EuropeanOption
-import QuantLib as ql
+
+try:
+    import QuantLib as ql
+    QL_AVAILABLE = True
+except Exception:
+    QL_AVAILABLE = False
+
+
+def bs_call_closed_form(S0, K, r, q, sigma, T):
+    """Ground-truth Black–Scholes–Merton call."""
+    from math import log, sqrt, exp
+    from statistics import NormalDist
+    N = NormalDist().cdf
+    d1 = (log(S0 / K) + (r - q + 0.5 * sigma * sigma) * T) / (sigma * sqrt(T))
+    d2 = d1 - sigma * sqrt(T)
+    return S0 * exp(-q * T) * N(d1) - K * exp(-r * T) * N(d2)
+
+
+def bs_put_closed_form(S0, K, r, q, sigma, T):
+    """Ground-truth Black–Scholes–Merton put."""
+    from math import log, sqrt, exp
+    from statistics import NormalDist
+    N = NormalDist().cdf
+    d1 = (log(S0 / K) + (r - q + 0.5 * sigma * sigma) * T) / (sigma * sqrt(T))
+    d2 = d1 - sigma * sqrt(T)
+    return K * exp(-r * T) * N(-d2) - S0 * exp(-q * T) * N(-d1)
+
+
+if QL_AVAILABLE:
+    def make_bsm_process(S0, r, q, sigma, eval_date,
+                         calendar=ql.TARGET(), day_count=ql.Actual365Fixed()):
+        """Flat, continuously compounded r and q; constant vol."""
+        ql.Settings.instance().evaluationDate = eval_date
+
+        spot = ql.QuoteHandle(ql.SimpleQuote(S0))
+        r_ts = ql.YieldTermStructureHandle(
+            ql.FlatForward(eval_date, ql.QuoteHandle(ql.SimpleQuote(r)),
+                           day_count, ql.Continuous, ql.Annual)
+        )
+        q_ts = ql.YieldTermStructureHandle(
+            ql.FlatForward(eval_date, ql.QuoteHandle(ql.SimpleQuote(q)),
+                           day_count, ql.Continuous, ql.Annual)
+        )
+        vol_ts = ql.BlackVolTermStructureHandle(
+            ql.BlackConstantVol(eval_date, calendar, sigma, day_count)
+        )
+        # ORDER: (spot, dividendYield, riskFreeRate, blackVol)
+        return ql.BlackScholesMertonProcess(spot, q_ts, r_ts, vol_ts)
+
 
 class TestEuropeanOption(unittest.TestCase):
     def setUp(self):
-        self.spot = 100
-        self.strike = 100
-        self.expiry = 1
-        self.vol = 0.2
-        self.rate = 0.05
-        self.div_yield = 0.0
+        self.S0 = 100.0
+        self.K = 100.0
+        self.T = 1.0
+        self.sigma = 0.2
+        self.r = 0.05
+        self.q = 0.0
 
-    def black_scholes_test_helper(self, option_type, spot, strike, expiry, vol, rate, div_yield, places):
-        option = EuropeanOption(expiry, strike, option_type, vol, rate, div_yield)
-        my_price = option.price(spot)
-
-        today = ql.Date.todaysDate()
-        ql.Settings.instance().evaluationDate = today
-
-        spot_quote = ql.QuoteHandle(ql.SimpleQuote(spot))
-        rate_ts = ql.YieldTermStructureHandle(ql.FlatForward(today, rate, ql.Actual365Fixed()))
-        div_ts = ql.YieldTermStructureHandle(ql.FlatForward(today, div_yield, ql.Actual365Fixed()))
-        vol_ts = ql.BlackVolTermStructureHandle(ql.BlackConstantVol(today, ql.TARGET(), vol, ql.Actual365Fixed()))
-        process = ql.BlackScholesMertonProcess(spot_quote, div_ts, rate_ts, vol_ts)
-
-        ql_option = ql.VanillaOption(
-            ql.PlainVanillaPayoff(ql.Option.Put if option_type == 'put' else ql.Option.Call, strike),
-            ql.EuropeanExercise(today + int(expiry * 365))
-        )
-        ql_option.setPricingEngine(ql.AnalyticEuropeanEngine(process))
-        return ql_option.NPV()
     def test_call_price_close_to_expected(self):
-        option = EuropeanOption(self.expiry, self.strike, 'call', self.vol, self.rate, self.div_yield)
-        price = option.price(self.spot)
-        self.assertAlmostEqual(price, 10.45, places=2)
+        opt = EuropeanOption(self.T, self.K, 'call', self.sigma, self.r, self.q)
+        price = opt.price(self.S0)
+        self.assertAlmostEqual(price, 10.4505835722, places=6)
 
     def test_put_price_close_to_expected(self):
-        option = EuropeanOption(self.expiry, self.strike, 'put', self.vol, self.rate, self.div_yield)
-        price = option.price(self.spot)
-        self.assertAlmostEqual(price, 5.57, places=2)
+        opt = EuropeanOption(self.T, self.K, 'put', self.sigma, self.r, self.q)
+        price = opt.price(self.S0)
+        self.assertAlmostEqual(price, 5.5735260223, places=6)
 
     def test_put_call_parity(self):
-        call = EuropeanOption(self.expiry, self.strike, 'call', self.vol, self.rate)
-        put = EuropeanOption(self.expiry, self.strike, 'put', self.vol, self.rate)
-        lhs = call.price(self.spot) - put.price(self.spot)
-        rhs = self.spot - self.strike * (2.71828 ** (-self.rate * self.expiry))
-        self.assertAlmostEqual(lhs, rhs, delta=1.0)
+        call = EuropeanOption(self.T, self.K, 'call', self.sigma, self.r, self.q)
+        put  = EuropeanOption(self.T, self.K, 'put',  self.sigma, self.r, self.q)
+        lhs = call.price(self.S0) - put.price(self.S0)
+        rhs = self.S0 * math.exp(-self.q * self.T) - self.K * math.exp(-self.r * self.T)
+        self.assertAlmostEqual(lhs, rhs, places=8)
 
     def test_invalid_option_type(self):
-        with self.assertRaises(AssertionError):
-            EuropeanOption(self.expiry, self.strike, 'banana', self.vol, self.rate)
+        with self.assertRaises((ValueError, AssertionError)):
+            EuropeanOption(self.T, self.K, 'banana', self.sigma, self.r, self.q)
 
+    @unittest.skipUnless(QL_AVAILABLE, "QuantLib not installed")
     def test_call_matches_quantlib(self):
-        ql_price = self.black_scholes_test_helper('call', self.spot, self.strike, self.expiry, self.vol, self.rate, self.div_yield, 2)
+        my_price = EuropeanOption(self.T, self.K, 'call', self.sigma, self.r, self.q).price(self.S0)
 
-    def test_put_matches_quantlib(self):
-        self.black_scholes_test_helper('put', self.spot, self.strike, self.expiry, self.vol, self.rate, self.div_yield, 2)
-    def test_call_matches_quantlib(self):
-        option = EuropeanOption(self.expiry, self.strike, 'call', self.vol, self.rate)
-        my_price = option.price(self.spot)
+        today = ql.Date(1, ql.September, 2025)
+        process = make_bsm_process(self.S0, self.r, self.q, self.sigma, today)
+        maturity = today + int(self.T * 365)
 
-        today = ql.Date.todaysDate()
-        ql.Settings.instance().evaluationDate = today
-
-        spot = ql.QuoteHandle(ql.SimpleQuote(self.spot))
-        rate = ql.YieldTermStructureHandle(ql.FlatForward(today, self.rate, ql.Actual365Fixed()))
-        div = ql.YieldTermStructureHandle(ql.FlatForward(today, self.div_yield, ql.Actual365Fixed()))
-        vol = ql.BlackVolTermStructureHandle(ql.BlackConstantVol(today, ql.TARGET(), self.vol, ql.Actual365Fixed()))
-        process = ql.BlackScholesMertonProcess(spot, div, rate, vol)
-
-        ql_option = ql.VanillaOption(
-            ql.PlainVanillaPayoff(ql.Option.Call, self.strike),
-            ql.EuropeanExercise(today + int(self.expiry * 365))
+        ql_opt = ql.VanillaOption(
+            ql.PlainVanillaPayoff(ql.Option.Call, self.K),
+            ql.EuropeanExercise(maturity)
         )
-        ql_option.setPricingEngine(ql.AnalyticEuropeanEngine(process))
+        ql_opt.setPricingEngine(ql.AnalyticEuropeanEngine(process))
+        ql_price = ql_opt.NPV()
 
-        self.assertAlmostEqual(my_price, ql_option.NPV(), places=2)
+        self.assertAlmostEqual(my_price, ql_price, places=6)
+
+    @unittest.skipUnless(QL_AVAILABLE, "QuantLib not installed")
+    def test_put_matches_quantlib(self):
+        my_price = EuropeanOption(self.T, self.K, 'put', self.sigma, self.r, self.q).price(self.S0)
+
+        today = ql.Date(1, ql.September, 2025)
+        process = make_bsm_process(self.S0, self.r, self.q, self.sigma, today)
+        maturity = today + int(self.T * 365)
+
+        ql_opt = ql.VanillaOption(
+            ql.PlainVanillaPayoff(ql.Option.Put, self.K),
+            ql.EuropeanExercise(maturity)
+        )
+        ql_opt.setPricingEngine(ql.AnalyticEuropeanEngine(process))
+        ql_price = ql_opt.NPV()
+
+        self.assertAlmostEqual(my_price, ql_price, places=6)
+
+
+if __name__ == "__main__":
+    unittest.main()
