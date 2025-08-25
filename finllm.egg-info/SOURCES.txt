@@ -40,12 +40,10 @@ finllm/pricing/american.py
 finllm/pricing/asian.py
 finllm/pricing/base.py
 finllm/pricing/bermudan.py
-finllm/pricing/binomial.py
 finllm/pricing/black_scholes.py
 finllm/pricing/heston.py
 finllm/pricing/implied_vol.py
 finllm/pricing/monte_carlo.py
-finllm/pricing/tempCodeRunnerFile.py
 finllm/simulation/__init__.py
 finllm/simulation/environment.py
 finllm/simulation/market_simulator.py

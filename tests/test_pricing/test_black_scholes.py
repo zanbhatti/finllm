@@ -11,6 +11,25 @@ class TestEuropeanOption(unittest.TestCase):
         self.rate = 0.05
         self.div_yield = 0.0
 
+    def black_scholes_test_helper(self, option_type, spot, strike, expiry, vol, rate, div_yield, places):
+        option = EuropeanOption(expiry, strike, option_type, vol, rate, div_yield)
+        my_price = option.price(spot)
+
+        today = ql.Date.todaysDate()
+        ql.Settings.instance().evaluationDate = today
+
+        spot_quote = ql.QuoteHandle(ql.SimpleQuote(spot))
+        rate_ts = ql.YieldTermStructureHandle(ql.FlatForward(today, rate, ql.Actual365Fixed()))
+        div_ts = ql.YieldTermStructureHandle(ql.FlatForward(today, div_yield, ql.Actual365Fixed()))
+        vol_ts = ql.BlackVolTermStructureHandle(ql.BlackConstantVol(today, ql.TARGET(), vol, ql.Actual365Fixed()))
+        process = ql.BlackScholesMertonProcess(spot_quote, div_ts, rate_ts, vol_ts)
+
+        ql_option = ql.VanillaOption(
+            ql.PlainVanillaPayoff(ql.Option.Put if option_type == 'put' else ql.Option.Call, strike),
+            ql.EuropeanExercise(today + int(expiry * 365))
+        )
+        ql_option.setPricingEngine(ql.AnalyticEuropeanEngine(process))
+        return ql_option.NPV()
     def test_call_price_close_to_expected(self):
         option = EuropeanOption(self.expiry, self.strike, 'call', self.vol, self.rate, self.div_yield)
         price = option.price(self.spot)
@@ -32,6 +51,11 @@ class TestEuropeanOption(unittest.TestCase):
         with self.assertRaises(AssertionError):
             EuropeanOption(self.expiry, self.strike, 'banana', self.vol, self.rate)
 
+    def test_call_matches_quantlib(self):
+        ql_price = self.black_scholes_test_helper('call', self.spot, self.strike, self.expiry, self.vol, self.rate, self.div_yield, 2)
+
+    def test_put_matches_quantlib(self):
+        self.black_scholes_test_helper('put', self.spot, self.strike, self.expiry, self.vol, self.rate, self.div_yield, 2)
     def test_call_matches_quantlib(self):
         option = EuropeanOption(self.expiry, self.strike, 'call', self.vol, self.rate)
         my_price = option.price(self.spot)
