@@ -1,4 +1,4 @@
-from options import Option
+from finllm.pricing.base import Option
 
 class EuropeanOption(Option):
     def price(self, spot_price):
